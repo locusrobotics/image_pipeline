@@ -249,6 +249,8 @@ class OpenCVCalibrationNode(CalibrationNode):
                     # Only shut down if we set camera info correctly, #3993
                     if self.do_upload():
                         rospy.signal_shutdown('Quit')
+        else: #process in frame click to collect object coordinates
+            
 
     def on_scale(self, scalevalue):
         if self.c.calibrated:
@@ -315,6 +317,7 @@ class OpenCVCalibrationNode(CalibrationNode):
             self.putText(display, msg, (width, self.y(1)))
 
         self.queue_display.append(display)
+        
 
     def redraw_stereo(self, drawable):
         height = drawable.lscrib.shape[0]
