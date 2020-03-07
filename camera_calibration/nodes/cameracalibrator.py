@@ -50,6 +50,12 @@ import numpy
 from camera_calibration.calibrator import MonoCalibrator, StereoCalibrator, ChessboardInfo, Patterns
 from std_msgs.msg import String
 from std_srvs.srv import Empty
+#from pynput.mouse import Controller
+#import pygetwindow as gw
+from Tkinter import *
+import PIL.Image, PIL.ImageTk
+
+#import matplotlib.pyplot as plt
 
 class DisplayThread(threading.Thread):
     """
@@ -67,18 +73,62 @@ class DisplayThread(threading.Thread):
         cv2.namedWindow("display", cv2.WINDOW_NORMAL)
         cv2.setMouseCallback("display", self.opencv_calibration_node.on_mouse)
         cv2.createTrackbar("scale", "display", 0, 100, self.opencv_calibration_node.on_scale)
+        
         while True:
             # wait for an image (could happen at the very beginning when the queue is still empty)
             while len(self.queue) == 0:
                 time.sleep(0.1)
             im = self.queue[0]
-            cv2.imshow("display", im)
+            cv2.imshow("display", im)            
             k = cv2.waitKey(6) & 0xFF
             if k in [27, ord('q')]:
                 rospy.signal_shutdown('Quit')
             elif k == ord('s'):
                 self.opencv_calibration_node.screendump(im)
 
+class KeySelectThread(threading.Thread):
+    """
+    Thread that displays the current images
+    And provide the UI for key point selection
+    """
+    def __init__(self, queue, opencv_calibration_node):
+        threading.Thread.__init__(self)
+        self.queue = queue
+        self.opencv_calibration_node = opencv_calibration_node
+        self.foundImage = False
+    def run(self):
+             
+        # wait for an image (could happen at the very beginning when the queue is still empty)
+        self.root = Tk()
+        self.canvas = Canvas(self.root, width = 800, height = 480)
+
+        self.canvas.pack()
+        self.but1 = Button(self.root, text="press me", command=lambda: self.changeImg())
+        self.but1.place(x=10, y=500)
+        self.updateDisplay()
+
+        self.root.mainloop()
+    def updateDisplay(self):
+        while len(self.queue) == 0:
+            time.sleep(0.1)
+        #self.img = PhotoImage(file="title.pgm")
+        if self.foundImage == False:
+            self.cv_img=self.queue[0]
+            height, width, no_channels = self.cv_img.shape
+            self.canvas = Canvas(self.root, width = width, height = height)
+            self.canvas.pack()
+            self.photo = PIL.ImageTk.PhotoImage(image = PIL.Image.fromarray(self.cv_img))
+            self.imgArea = self.canvas.create_image(0, 0, anchor = NW, image = self.photo)
+            self.foundImage = True
+        else:
+            self.photo = PIL.ImageTk.PhotoImage(image = PIL.Image.fromarray(self.queue[0]))
+            self.canvas.itemconfig(self.imgArea, image = self.photo )
+            
+        self.canvas.after(100, self.updateDisplay) # call itself to implement the timer function
+        
+    def changeImg(self):
+        pass
+    
 class ConsumerThread(threading.Thread):
     def __init__(self, queue, function):
         threading.Thread.__init__(self)
@@ -91,7 +141,6 @@ class ConsumerThread(threading.Thread):
             while len(self.queue) == 0:
                 time.sleep(0.1)
             self.function(self.queue[0])
-
 
 class CalibrationNode:
     def __init__(self, boards, service_check = True, synchronizer = message_filters.TimeSynchronizer, flags = 0,
@@ -142,7 +191,7 @@ class CalibrationNode:
         sth = ConsumerThread(self.q_stereo, self.handle_stereo)
         sth.setDaemon(True)
         sth.start()
-        
+             
     def redraw_stereo(self, *args):
         pass
     def redraw_monocular(self, *args):
@@ -166,6 +215,7 @@ class CalibrationNode:
         # This should just call the MonoCalibrator
         drawable = self.c.handle_msg(msg)
         self.displaywidth = drawable.scrib.shape[1]
+        self.displayheight = drawable.scrib.shape[0]
         self.redraw_monocular(drawable)
 
     def handle_stereo(self, msg):
@@ -220,6 +270,7 @@ class OpenCVCalibrationNode(CalibrationNode):
     FONT_SCALE = 0.6
     FONT_THICKNESS = 2
 
+
     def __init__(self, *args, **kwargs):
 
         CalibrationNode.__init__(self, *args, **kwargs)
@@ -228,6 +279,12 @@ class OpenCVCalibrationNode(CalibrationNode):
         self.display_thread = DisplayThread(self.queue_display, self)
         self.display_thread.setDaemon(True)
         self.display_thread.start()
+        
+        self.selth = KeySelectThread(self.queue_display, self)
+        self.selth.setDaemon(True)
+        self.selth.start()
+
+        #self.mouseinst=Controller()
 
     @classmethod
     def putText(cls, img, text, org, color = (0,0,0)):
@@ -249,9 +306,18 @@ class OpenCVCalibrationNode(CalibrationNode):
                     # Only shut down if we set camera info correctly, #3993
                     if self.do_upload():
                         rospy.signal_shutdown('Quit')
-        else: #process in frame click to collect object coordinates
-            
+        elif event == cv2.EVENT_LBUTTONDOWN and x>=0 and x<self.displaywidth and y>=0 and y< self.displayheight: 
+            #process in frame click to collect object coordinates
+            self.setFeaturePoints(event, x, y, flags, "display")
 
+    def setFeaturePoints(self, event, x, y, flags, param):
+        #print("Clicked at ({},{}), window pos=({},{})".format(x, y, self.mouseinst.position[0],self.mouseinst.position[1] ))
+        print("Clicked at ({},{})".format(x, y) )
+        print("Window width x height={}x{}".format(self.displaywidth, self.displayheight) )
+        #displayWindow = gw.getWindowsWithTitle(param)[0]
+        #print("focus window's position and size (x,y, w, h)=({},{},{},{})".format(displayWindow.left, displayWindow.top,
+        #       displayWindow.width, displayWindow.height) )
+        
     def on_scale(self, scalevalue):
         if self.c.calibrated:
             self.c.set_alpha(scalevalue / 100.0)
@@ -317,8 +383,15 @@ class OpenCVCalibrationNode(CalibrationNode):
             self.putText(display, msg, (width, self.y(1)))
 
         self.queue_display.append(display)
-        
-
+    def showCalibData(self, drawable):        
+        # try to display with matplot for easy handling of key point selection
+            if created==False:
+                created = True
+                im1=self.plot1.imshow(im)
+                #im1.show()
+            else:
+                im1.set_data(im)
+            #plt.show()
     def redraw_stereo(self, drawable):
         height = drawable.lscrib.shape[0]
         width = drawable.lscrib.shape[1]
@@ -460,6 +533,7 @@ def main():
     rospy.init_node('cameracalibrator')
     node = OpenCVCalibrationNode(boards, options.service_check, sync, calib_flags, pattern, options.camera_name,
                                  checkerboard_flags=checkerboard_flags)
+    #run the display with matplot here in main program, because it is not thread safe    
     rospy.spin()
 
 if __name__ == "__main__":
