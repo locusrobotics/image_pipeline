@@ -85,7 +85,7 @@ class DisplayThread(threading.Thread):
                 rospy.signal_shutdown('Quit')
             elif k == ord('s'):
                 self.opencv_calibration_node.screendump(im)
-
+        
 class KeySelectThread(threading.Thread):
     """
     Thread that displays the current images
@@ -100,28 +100,40 @@ class KeySelectThread(threading.Thread):
              
         # wait for an image (could happen at the very beginning when the queue is still empty)
         self.root = Tk()
-        self.canvas = Canvas(self.root, width = 800, height = 480)
-
-        self.canvas.pack()
-        self.but1 = Button(self.root, text="press me", command=lambda: self.changeImg())
-        self.but1.place(x=10, y=500)
+        self.frame = Frame(self.root)
+        self.frame.pack(fill=BOTH, expand=YES)
         self.updateDisplay()
+        self.but1 = Button(self.root, text="press me", command=lambda: self.changeImg())
+        self.but1.pack()
 
         self.root.mainloop()
+    def configure(self,event):
+        w, h = event.width, event.height
+        #print("congiure event (w={}, h={})".format(w, h))
+        self.image = self.image.resize((w, h), PIL.Image.ANTIALIAS)
+        self.photo = PIL.ImageTk.PhotoImage(image=self.image)
+        self.canvas.itemconfig(self.imgArea, image = self.photo )
+        
     def updateDisplay(self):
         while len(self.queue) == 0:
             time.sleep(0.1)
-        #self.img = PhotoImage(file="title.pgm")
-        if self.foundImage == False:
-            self.cv_img=self.queue[0]
-            height, width, no_channels = self.cv_img.shape
-            self.canvas = Canvas(self.root, width = width, height = height)
-            self.canvas.pack()
-            self.photo = PIL.ImageTk.PhotoImage(image = PIL.Image.fromarray(self.cv_img))
+
+        if self.foundImage == False:            
+            height, width, _ = self.queue[0].shape
+            self.canvas = Canvas(self.frame, width = width, height = height, bd=0, highlightthickness=0)            
+            self.canvas.pack(fill=BOTH, expand=YES)
+            #self.canvas.addtag_all("all")
+            self.image  = PIL.Image.fromarray(self.queue[0])
+            self.photo = PIL.ImageTk.PhotoImage(image=self.image)
             self.imgArea = self.canvas.create_image(0, 0, anchor = NW, image = self.photo)
+            self.canvas.bind("<Configure>", self.configure)
             self.foundImage = True
         else:
-            self.photo = PIL.ImageTk.PhotoImage(image = PIL.Image.fromarray(self.queue[0]))
+            self.image  = PIL.Image.fromarray(self.queue[0])
+            width = self.frame.winfo_width()
+            height = self.frame.winfo_height()
+            self.image = self.image.resize((width, height), PIL.Image.ANTIALIAS)
+            self.photo = PIL.ImageTk.PhotoImage(image = self.image)
             self.canvas.itemconfig(self.imgArea, image = self.photo )
             
         self.canvas.after(100, self.updateDisplay) # call itself to implement the timer function
@@ -276,11 +288,12 @@ class OpenCVCalibrationNode(CalibrationNode):
         CalibrationNode.__init__(self, *args, **kwargs)
 
         self.queue_display = deque([], 1)
+        self.image_display = deque([], 1) #image only without buttons
         self.display_thread = DisplayThread(self.queue_display, self)
         self.display_thread.setDaemon(True)
         self.display_thread.start()
         
-        self.selth = KeySelectThread(self.queue_display, self)
+        self.selth = KeySelectThread(self.image_display, self)
         self.selth.setDaemon(True)
         self.selth.start()
 
@@ -357,7 +370,7 @@ class OpenCVCalibrationNode(CalibrationNode):
         display[0:height, 0:width,:] = drawable.scrib
         display[0:height, width:width+100,:].fill(255)
 
-
+        self.image_display.append(numpy.asarray(drawable.scrib, dtype=numpy.uint8) ) 
         self.buttons(display)
         if not self.c.calibrated:
             if drawable.params:
@@ -383,6 +396,7 @@ class OpenCVCalibrationNode(CalibrationNode):
             self.putText(display, msg, (width, self.y(1)))
 
         self.queue_display.append(display)
+        
     def showCalibData(self, drawable):        
         # try to display with matplot for easy handling of key point selection
             if created==False:
