@@ -1,3 +1,4 @@
+import rospy
 from Tkinter import *
 import PIL.Image, PIL.ImageTk
 import threading
@@ -17,14 +18,25 @@ class KeySelectThread(threading.Thread):
     def run(self):
              
         # wait for an image (could happen at the very beginning when the queue is still empty)
+        #NoDefaultRoot()
+        # this is the main root for feature selection
         self.root = Tk()
+        
+        self.root.bind("<Key>", self.handle_key_event)
+        self.root.title("Extrinsic Calibration")
         self.frame = Frame(self.root)
         self.frame.pack(fill=BOTH, expand=YES)
         self.updateDisplay()
-        self.but1 = Button(self.root, text="press me", command=lambda: self.changeImg())
-        self.but1.pack()
-
+        
+        # this is the editor for key selection and display
+        self.editor=KeySelectEditor(self.root)
+        # main tkinter loop, there is no need to run two main loop, because main loop won't return
         self.root.mainloop()
+        
+    def handle_key_event(self, event):
+        if event.char == 'q':
+            rospy.signal_shutdown('Quit')
+        
     def configure(self,event):
         w, h = event.width, event.height
         #print("congiure event (w={}, h={})".format(w, h))
@@ -38,9 +50,10 @@ class KeySelectThread(threading.Thread):
 
         if self.foundImage == False:            
             height, width, _ = self.queue[0].shape
-            self.canvas = Canvas(self.frame, width = width, height = height, bd=0, highlightthickness=0)            
+            self.canvas = Canvas(self.frame, width = width, height = height, bd=0, highlightthickness=0)
+            self.canvas.bind("<Button-1>", self.on_mouse_click)           
             self.canvas.pack(fill=BOTH, expand=YES)
-            #self.canvas.addtag_all("all")
+            
             self.image  = PIL.Image.fromarray(self.queue[0])
             self.photo = PIL.ImageTk.PhotoImage(image=self.image)
             self.imgArea = self.canvas.create_image(0, 0, anchor = NW, image = self.photo)
@@ -55,6 +68,35 @@ class KeySelectThread(threading.Thread):
             self.canvas.itemconfig(self.imgArea, image = self.photo )
             
         self.canvas.after(100, self.updateDisplay) # call itself to implement the timer function
+    def on_mouse_click(self, event):
+        print("clicked at (x={}, y={})".format(event.x, event.y) )
+        self.editor.insertItem(','.join([str(event.x), str(event.y)]) )
+        
         
     def changeImg(self):
         pass
+    
+class KeySelectEditor:
+    def __init__(self, master):
+        self.root = Toplevel(master)
+        self.root.title("Keypoint List")
+        self.frame=Frame(self.root)
+        self.keylistbox = Listbox(self.frame, selectmode=EXTENDED)
+        self.keylistbox.pack(fill=BOTH, expand=1)
+        self.keys=[]
+        self.fill_listbox(self.keys)
+        self.excalib_but = Button(self.frame, text="Start Calibration", command=lambda: self.calib_extrinsic())
+        self.excalib_but.pack()
+        self.frame.pack()
+        
+    def fill_listbox(self, keys):
+        for key in keys:
+            self.keylistbox.insert(END, key)        
+
+    def insertItem(self, keypoint):
+        self.keys.append(keypoint)
+        self.keylistbox.insert(END, keypoint)
+        
+    def calib_extrinsic(self):
+        pass
+    

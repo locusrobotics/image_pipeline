@@ -236,16 +236,18 @@ class OpenCVCalibrationNode(CalibrationNode):
 
         self.queue_display = deque([], 1)
         self.image_display = deque([], 1) #image only without buttons
-        self.display_thread = DisplayThread(self.queue_display, self)
-        self.display_thread.setDaemon(True)
-        self.display_thread.start()
-        
+                
         self.excalib_options = excalib_options
         
         if len(self.excalib_options)>0 and self.excalib_options['extrinsic_only'] == True:
             self.selth = KeySelectThread(self.image_display, self)
             self.selth.setDaemon(True)
             self.selth.start()
+        else:
+            self.display_thread = DisplayThread(self.queue_display, self)
+            self.display_thread.setDaemon(True)
+            self.display_thread.start()
+
 
     @classmethod
     def putText(cls, img, text, org, color = (0,0,0)):
