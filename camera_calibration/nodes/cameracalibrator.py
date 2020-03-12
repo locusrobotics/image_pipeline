@@ -50,10 +50,9 @@ import numpy
 from camera_calibration.calibrator import MonoCalibrator, StereoCalibrator, ChessboardInfo, Patterns
 from std_msgs.msg import String
 from std_srvs.srv import Empty
+from cameraextrinsic import KeySelectThread
 #from pynput.mouse import Controller
 #import pygetwindow as gw
-from Tkinter import *
-import PIL.Image, PIL.ImageTk
 
 #import matplotlib.pyplot as plt
 
@@ -86,60 +85,6 @@ class DisplayThread(threading.Thread):
             elif k == ord('s'):
                 self.opencv_calibration_node.screendump(im)
         
-class KeySelectThread(threading.Thread):
-    """
-    Thread that displays the current images
-    And provide the UI for key point selection
-    """
-    def __init__(self, queue, opencv_calibration_node):
-        threading.Thread.__init__(self)
-        self.queue = queue
-        self.opencv_calibration_node = opencv_calibration_node
-        self.foundImage = False
-    def run(self):
-             
-        # wait for an image (could happen at the very beginning when the queue is still empty)
-        self.root = Tk()
-        self.frame = Frame(self.root)
-        self.frame.pack(fill=BOTH, expand=YES)
-        self.updateDisplay()
-        self.but1 = Button(self.root, text="press me", command=lambda: self.changeImg())
-        self.but1.pack()
-
-        self.root.mainloop()
-    def configure(self,event):
-        w, h = event.width, event.height
-        #print("congiure event (w={}, h={})".format(w, h))
-        self.image = self.image.resize((w, h), PIL.Image.ANTIALIAS)
-        self.photo = PIL.ImageTk.PhotoImage(image=self.image)
-        self.canvas.itemconfig(self.imgArea, image = self.photo )
-        
-    def updateDisplay(self):
-        while len(self.queue) == 0:
-            time.sleep(0.1)
-
-        if self.foundImage == False:            
-            height, width, _ = self.queue[0].shape
-            self.canvas = Canvas(self.frame, width = width, height = height, bd=0, highlightthickness=0)            
-            self.canvas.pack(fill=BOTH, expand=YES)
-            #self.canvas.addtag_all("all")
-            self.image  = PIL.Image.fromarray(self.queue[0])
-            self.photo = PIL.ImageTk.PhotoImage(image=self.image)
-            self.imgArea = self.canvas.create_image(0, 0, anchor = NW, image = self.photo)
-            self.canvas.bind("<Configure>", self.configure)
-            self.foundImage = True
-        else:
-            self.image  = PIL.Image.fromarray(self.queue[0])
-            width = self.frame.winfo_width()
-            height = self.frame.winfo_height()
-            self.image = self.image.resize((width, height), PIL.Image.ANTIALIAS)
-            self.photo = PIL.ImageTk.PhotoImage(image = self.image)
-            self.canvas.itemconfig(self.imgArea, image = self.photo )
-            
-        self.canvas.after(100, self.updateDisplay) # call itself to implement the timer function
-        
-    def changeImg(self):
-        pass
     
 class ConsumerThread(threading.Thread):
     def __init__(self, queue, function):
@@ -283,9 +228,11 @@ class OpenCVCalibrationNode(CalibrationNode):
     FONT_THICKNESS = 2
 
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, boards, service_check = True, synchronizer = message_filters.TimeSynchronizer, flags = 0,
+                 pattern=Patterns.Chessboard, camera_name='', checkerboard_flags = 0, excalib_options=[] ):
 
-        CalibrationNode.__init__(self, *args, **kwargs)
+        CalibrationNode.__init__(self, boards, service_check, synchronizer, flags,
+                 pattern, camera_name, checkerboard_flags)
 
         self.queue_display = deque([], 1)
         self.image_display = deque([], 1) #image only without buttons
@@ -293,11 +240,12 @@ class OpenCVCalibrationNode(CalibrationNode):
         self.display_thread.setDaemon(True)
         self.display_thread.start()
         
-        self.selth = KeySelectThread(self.image_display, self)
-        self.selth.setDaemon(True)
-        self.selth.start()
-
-        #self.mouseinst=Controller()
+        self.excalib_options = excalib_options
+        
+        if len(self.excalib_options)>0 and self.excalib_options['extrinsic_only'] == True:
+            self.selth = KeySelectThread(self.image_display, self)
+            self.selth.setDaemon(True)
+            self.selth.start()
 
     @classmethod
     def putText(cls, img, text, org, color = (0,0,0)):
@@ -319,9 +267,9 @@ class OpenCVCalibrationNode(CalibrationNode):
                     # Only shut down if we set camera info correctly, #3993
                     if self.do_upload():
                         rospy.signal_shutdown('Quit')
-        elif event == cv2.EVENT_LBUTTONDOWN and x>=0 and x<self.displaywidth and y>=0 and y< self.displayheight: 
+        #elif event == cv2.EVENT_LBUTTONDOWN and x>=0 and x<self.displaywidth and y>=0 and y< self.displayheight: 
             #process in frame click to collect object coordinates
-            self.setFeaturePoints(event, x, y, flags, "display")
+        #    self.setFeaturePoints(event, x, y, flags, "display")
 
     def setFeaturePoints(self, event, x, y, flags, param):
         #print("Clicked at ({},{}), window pos=({},{})".format(x, y, self.mouseinst.position[0],self.mouseinst.position[1] ))
@@ -397,15 +345,6 @@ class OpenCVCalibrationNode(CalibrationNode):
 
         self.queue_display.append(display)
         
-    def showCalibData(self, drawable):        
-        # try to display with matplot for easy handling of key point selection
-            if created==False:
-                created = True
-                im1=self.plot1.imshow(im)
-                #im1.show()
-            else:
-                im1.set_data(im)
-            #plt.show()
     def redraw_stereo(self, drawable):
         height = drawable.lscrib.shape[0]
         width = drawable.lscrib.shape[1]
@@ -488,6 +427,18 @@ def main():
     group.add_option("--disable_calib_cb_fast_check", action='store_true', default=False,
                      help="uses the CALIB_CB_FAST_CHECK flag for findChessboardCorners")
     parser.add_option_group(group)
+    group = OptionGroup(parser, "Extrinsic Calibration Options")
+    group.add_option("--extrinsic-only",
+                     action="store_true", default=False,
+                     help="Extrinsic calibration only")
+    group.add_option("--intrinsic-file",
+                     type="string", default="camera_intrinsic.json",
+                     help="relative or absolute path of camera intrinsic json format file to read from")
+    group.add_option("--extrinsic-file",
+                     type="string", default="camera_extrinsic.json",
+                     help="relative or absolute path of camera intrinsic json format file to write to")
+    parser.add_option_group(group)
+    
     options, args = parser.parse_args()
 
     if len(options.size) != len(options.square):
@@ -543,10 +494,16 @@ def main():
         checkerboard_flags = 0
     else:
         checkerboard_flags = cv2.CALIB_CB_FAST_CHECK
-
+        
+    excalib={}
+    if options.extrinsic_only:
+        excalib['extrinsic_only'] = True
+        excalib['intrinsic_file'] = options.intrinsic_file
+        excalib['extrinsic_file'] = options.extrinsic_file
+        print("extrinsic only= {}, {}, {}".format(excalib['extrinsic_only'], excalib['intrinsic_file'], excalib['extrinsic_file']) )
     rospy.init_node('cameracalibrator')
     node = OpenCVCalibrationNode(boards, options.service_check, sync, calib_flags, pattern, options.camera_name,
-                                 checkerboard_flags=checkerboard_flags)
+                                 checkerboard_flags=checkerboard_flags, excalib_options=excalib)
     #run the display with matplot here in main program, because it is not thread safe    
     rospy.spin()
 

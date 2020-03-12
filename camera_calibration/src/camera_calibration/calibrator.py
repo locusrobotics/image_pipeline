@@ -368,6 +368,7 @@ class Calibrator(object):
         # Scale the input image down to ~VGA size
         height = img.shape[0]
         width = img.shape[1]
+        #print("original resolution: {}x{}".format(width, height) )
         scale = math.sqrt( (width*height) / (640.*480.) )
         if scale > 1.0:
             scrib = cv2.resize(img, (int(width / scale), int(height / scale)))
