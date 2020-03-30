@@ -175,7 +175,8 @@ int main(int argc, char **argv)
     }
 
     // Start the OpenCV window thread so we don't have to waitKey() somewhere
-    cv::startWindowThread();
+    // This will cause problem when running it as a ROS node
+    //cv::startWindowThread();
   }
 
   // Handle transport
