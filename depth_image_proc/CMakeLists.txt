@@ -14,7 +14,10 @@ find_package(ament_cmake_auto REQUIRED)
 ament_auto_find_build_dependencies()
 
 find_package(Eigen3 QUIET)
-if(NOT EIGEN3_FOUND)
+# Eigen 5's config sets only Eigen3_FOUND and the Eigen3::Eigen target, not EIGEN3_FOUND.
+if(TARGET Eigen3::Eigen)
+  link_libraries(Eigen3::Eigen)
+elseif(NOT EIGEN3_FOUND)
   find_package(Eigen REQUIRED)
   set(EIGEN3_INCLUDE_DIRS ${EIGEN_INCLUDE_DIRS})
   include_directories(include ${EIGEN3_INCLUDE_DIRS})
